@@ -14,7 +14,7 @@
 
 ## 2 一轮打桩指令(`stub_instruction.json`)
 
-分析侧 → 采集侧的交接产物,唯一输入就是采集侧 `load` 阶段要的字段 + 变换规则。可直接参考示例模板 `templates/stub_instruction.example.json`(训推融合 vs 独立算子场景;算子名/路径/维度仅为占位符)。schema:
+分析侧 → 采集侧的交接产物,唯一输入就是采集侧 `load` 阶段要的字段 + 变换规则。参考示例模板 `templates/stub_instruction.example.json`(算子名/路径/维度仅为占位符)。schema:
 
 ```json
 {

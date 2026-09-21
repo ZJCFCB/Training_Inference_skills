@@ -10,7 +10,7 @@ verl 版本演进彻底改变了架构,裁剪/接入/request_id 位置随版本�
 | v0.7–0.8 | Hybrid AgentLoop(默认)/ Fully Async | Hybrid 共享 NPU;Fully Async 独立 NPU 池 | `dump/verl_async_consistency_preprocess_dump.md` |
 | v0.9.dev | V1 Trainer(Sync / Colocate Async / Separate Async) | TransferQueue 传数据,jagged TensorDict | `dump/verl_v1_trainer_consistency_preprocess_dump.md` |
 
-能否用官方 `msprobe compare --consistent_check` 自动比对属分析侧判断(由 **consistency-dump-analysis** 处理);采集姿势按上表对应 verl 版本的 `dump/verl_*_consistency_preprocess_dump.md` 官方文档(SPMD / Async / V1 各一份)。
+能否用官方 `msprobe compare --consistent_check` 自动比对属分析侧判断(由 **consistency-dump-analysis** 处理);采集姿势按上表对应版本的官方 `dump/verl_*_consistency_preprocess_dump.md`。
 
 ## 1. 识别架构形态
 

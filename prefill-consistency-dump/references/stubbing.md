@@ -5,7 +5,7 @@
 ## 1 前提
 
 - msprobe 版本带 `module_load/tensor_loader.py`(验证:`python3 -c "import msprobe, importlib.util; print(importlib.util.find_spec('msprobe.pytorch.dump.module_load.tensor_loader'))"`)。26.1 正式版没有,需上游 master 源码编译安装。
-- 必须有先前 `level=L0` 或 `mix`、`task=tensor` 采集的源 dump(`dump_tensor_data/*.pt`),作为加载源。
+- 必须有先前 `level=L0` 或 `mix`、`task=tensor` 采集的源 dump(`dump_tensor_data/*.pt`)。
 - `load` 只覆盖**输入 tensor**(位置参数 args 的 `.input.{i}.pt`、关键字参数 kwargs 的 `.kwargs.{key}.pt`);`.parameters.weight.pt`、`.backward.*` 不参与覆盖。
 - **本阶段输入是分析侧的打桩指令** `stub_instruction.json`(示例模板 `references/templates/stub_instruction.example.json`,算子名/路径仅为占位符);字段含义见 consistency-dump-analysis 的 `references/stubbing-loop.md` §2。
 
@@ -52,7 +52,7 @@
 
 1. **重命名 `.pt` 文件**为目标的条目名格式:`Module.<目标模块点分路径>.<类名>.forward.<N>.input.<i>.pt`(或 `.kwargs.<key>.pt`)。
 2. **对齐 shape/dtype**:融合算子输出 → 按权重行序切片拆成独立投影的 q/kv/v 段;需要 squeeze/reshape 的做变换。切片前先做相关性扫描确认布局(见 consistency-dump-analysis 的 `references/semantic-mapping.md` §布局确认)。
-3. 改造产物放**新目录**(别污染源 dump),`load.path` 指向它。**新目录必须保持与源相同的层级结构** `step{N}/rank{M}/dump_tensor_data/`——load 按 `{load.path}/step{N}/rank{M}/dump_tensor_data/{目标条目名}.input.{i}.pt` 精确找文件,重命名/切分后的 `.pt` 要摆到对应位置。变换规则来自 analysis 侧打桩指令的 `modules[].transform`。
+3. 改造产物放**新目录**(别污染源 dump),`load.path` 指向它。**新目录必须保持与源相同的层级结构** `step{N}/rank{M}/dump_tensor_data/`——load 按 `{load.path}/step{N}/rank{M}/dump_tensor_data/{目标条目名}.input.{i}.pt` 精确找文件。变换规则来自 analysis 侧打桩指令的 `modules[].transform`。
 4. 检查目标模块 forward 的**参数顺序**:工具按位置 index 加载——A 模型 `forward(x, mask)` 与 B 模型 `forward(mask, x)` 会被按位置错配(shape 碰巧对上但语义错误),工具无法自动检测,须保证两侧 forward 签名一致。
 
 ## 4 流程(与 SKILL 阶段 7 对应)
@@ -72,7 +72,7 @@
 ## 5 验证与坑
 
 **验证 load 生效**:
-- 覆盖边界:目标侧 dump 的该模块 input 与源 dump 的对应 tensor `torch.equal` / cosine=1.0(官方示例用 `msprobe compare` 比对确认)。
+- 覆盖边界:目标侧 dump 的该模块 input 与源 dump 对应 tensor `torch.equal` / cosine=1.0(官方示例用 `msprobe compare` 比对确认)。
 - 无"未命中条目"warning(`debugger.stop()` 时提示条目从未命中 = `forward.{N}` 序号不对)。
 - 日志出现 `[load] module validation: X/Y modules valid in model`。
 

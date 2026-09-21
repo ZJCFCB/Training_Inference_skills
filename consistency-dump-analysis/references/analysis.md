@@ -21,15 +21,15 @@ same_shape / same_dtype / no_nonfinite / torch.equal=true / max_abs_diff=0
 | `MISSING` | 某侧文件缺失 |
 | `evidence_missing` | 语义层映射不上,没比(不是脚本分类,是分析者标注) |
 
-**结果必读项**:每个 NOT_EXACT 边界的 `max_abs_diff`、`nz_count/nz_fraction`(非零元素占比)、`max_rel_diff`。占比极低(如 <1e-3)提示舍入级,占比接近 1 提示系统性差异。
+**结果必读项**:每个 NOT_EXACT 边界的 `max_abs_diff`、`nz_count/nz_fraction`(非零占比)、`max_rel_diff`。占比极低(<1e-3)提示舍入级,占比接近 1 提示系统性差异。
 
 ## 2 首差异定位
 
 首差异 = **沿语义执行顺序第一个非 EXACT 的边界**(脚本按 `execution_order` 排序给出)。
 
 纪律:
-- **首差异的所有前序边界必须全部 EXACT**。任一前序非 EXACT,差异的真正源头更早,继续前推。这就是"首差异必须是最早的"。
-- 若首差异边界之前存在 `evidence_missing`(没比到的层),结论要注明「映射缺失,不排除更早来源」,必要时补映射再定论。
+- **首差异的所有前序边界必须全部 EXACT**。任一前序非 EXACT,差异真正源头更早,继续前推。
+- 若首差异之前有 `evidence_missing`(没比到的层),结论注明「映射缺失,不排除更早来源」,必要时补映射再定论。
 - 首差异往往是**极小值**(GEMM 舍入 ULP 级),别因为小就忽略——它是下游所有非零的放大源头。
 
 ## 3 ULP 量化:舍入级 vs 逻辑级
@@ -63,17 +63,17 @@ mult = diff / bf16_ulp(a[nz].abs())   # 差异元素 / ULP 倍数
   → <post_attn_norm> ~1e0 → <final_norm> ~1e1 → <logits> ~1e1
 ```
 
-放大链是结论的证据主线:它把「边界级首差异」与「端到端指标非零」连起来。取链上的关键边界(不是每个)打印 max_abs 即可。
+放大链是结论的证据主线:它把「边界级首差异」与「端到端指标非零」连起来。取链上关键边界(不是每个)打印 max_abs 即可。
 
 ## 5 排除假设
 
 按序排除,每条记录排除依据:
 
 1. **权重不同步** → 权重边界(embedding/qkv/o_proj/lm_head)是否 `torch.equal`?是 → 排除。
-2. **输入未对齐 / padding** → 首差异前序输入边界是否 EXACT?训练侧是否有 padding 导致 shape 不等(此时是映射/采集问题,修正而非报差异)?是 → 排除。
+2. **输入未对齐/padding** → 首差异前序输入边界是否 EXACT?训练侧有 padding 导致 shape 不等(此时是映射/采集问题,修正而非报差异)?是 → 排除。
 3. **配置差异** → 两侧结构(独立 vs 融合 GEMM、norm 融合位置、MoE 路由)是否语义等价?结构不同但数学等价 → 不算根因。
 4. **并行切分不一致** → 两侧 TP/PP/EP 一致?是 → 排除。
-5. **fused 内核 / 累加顺序** → 首差异 ULP 指纹符合舍入级 → 定性浮点差异。
+5. **fused 内核/累加顺序** → 首差异 ULP 指纹符合舍入级 → 定性浮点差异。
 6. **随机性** → 单样本确定性配置 + 前序 EXACT → 排除。
 
 **排除假设的证据与首差异证据同等重要**。结论里必须写清「为什么不是权重/配置/输入问题」——否则「首差异是舍入差异」的结论不成立。
@@ -90,5 +90,5 @@ mult = diff / bf16_ulp(a[nz].abs())   # 差异元素 / ULP 倍数
   | 证据不足 | `evidence_missing` |
 - **结论口径**:首差异位置 + 根因 + 证据链 + 是否可解。绝不只报「最终指标非零」。
 - 数值指标只引用实测:
-  - prefill 段 logprob diff(训练循环直接算,日志实测 `mean/max/std`):`mean≈0` 训推一致;非 0 结合逐边界定位;日志没有 → `evidence_missing`,不编。口径见 `prefill-logprob-diff.md`。
-  - response 段 E2E(如 `rollout_probs_diff`):prompt-only 裁剪下无实测(valid=0 是「没算」不是「一致」);要数值需跑含 response 的标准训练实测,否则 `evidence_missing`。与 prefill logprob diff 不同层面,不互替。
+  - prefill 段 logprob diff(训练循环直接算,日志实测 mean/max/std):`mean≈0` 训推一致;非 0 结合逐边界定位;日志没有 → `evidence_missing`,不编。口径见 `prefill-logprob-diff.md`。
+  - response 段 E2E(`rollout_probs_diff`):prompt-only 裁剪下无实测(valid=0 是「没算」不是「一致」);要数值需跑含 response 的标准训练实测,否则 `evidence_missing`。与 prefill logprob diff 不同层面,不互替。

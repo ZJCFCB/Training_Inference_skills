@@ -7,22 +7,22 @@
 ```python
 from msprobe.pytorch import PrecisionDebugger, seed_all
 
-seed_all()   # 固定随机种子 + 开启确定性计算,保证可复现
+seed_all()   # 固定随机种子 + 开启确定性计算
 debugger = PrecisionDebugger(config_path="./config.json")  # 尽早实例化,在导包之后、模型之前
 
 debugger.start(model=model, token_range=None, rank_id=None, scheduled_tokens=None)
-#   model          采集 Module 级数据时必传(L0/mix 或 token_range 非 None 时)。只 dump 传入层的子层。
-#   token_range    [start, end] 闭区间,推理逐 token 采集用(例 [1,3] 采第 1~3 次)
-#   rank_id        自定义 rank(默认走 get_rank;SGLang DP 等重复 rank 场景必须传,如 self.gpu_id)
+#   model          采集 Module 级数据时必传(L0/mix)。只 dump 传入层的子层。
+#   token_range    [start, end] 闭区间,推理逐 token 采集用
+#   rank_id        自定义 rank(默认 get_rank;SGLang DP 等重复 rank 场景必须传,如 self.gpu_id)
 #   scheduled_tokens  {"request_id": token数},配合 config 的 request_id 按请求切片
 #   前向代码
 debugger.stop()   # 必须调用,否则落盘不全
-debugger.step()   # 结束一个 step,落盘并推进步数(放在 stop 之后);尽量放 loss.backward 之后,否则反向数据可能丢失
+debugger.step()   # 结束一个 step,落盘并推进(放 stop 之后);尽量放 loss.backward 之后,否则反向数据可能丢失
 ```
 
 其他接口:
 - `module_dump(module, name)` / `module_dump_end()` 只 dump 指定模块
-- `save(variable, name, save_backward=True)` **单点保存,补 L0/L1/mix 盲区**(variable 支持 dict/list/tuple/tensor/int/float/str;**需 level="debug"**,task=statistics/tensor)
+- `save(variable, name, save_backward=True)` **单点保存,补 L0/L1/mix 盲区**(需 `level="debug"`)
 - `set_init_step(n)` 改起始 step;`register_custom_api(module, api, prefix)` / `restore_custom_api` 注册自定义 API
 - `seed_all(seed=1234, mode=False, rm_dropout=False)` 固定种子 + 确定性;**不保证模型输入一致**,需自行关 shuffle
 
@@ -50,7 +50,7 @@ debugger.step()   # 结束一个 step,落盘并推进步数(放在 stop 之后);
 
 | 字段 | 取值 | 说明 |
 |---|---|---|
-| `task` | `statistics` / `tensor` / `nan_check` / `acc_check` | statistics=统计量(轻量,首选);tensor=完整张量;nan_check 仅 PyTorch(L1,含 `is_nan`);acc_check 仅 PyTorch,采集勿选 |
+| `task` | `statistics` / `tensor` / `nan_check` / `acc_check` | statistics=统计量(轻量,首选);tensor=完整张量;nan_check 仅 PyTorch(L1);acc_check 仅 PyTorch,采集勿选 |
 | `level` | `L0` / `L1` / `mix` | L0=Module 级(需 start 传 model);L1=API 级;mix=两者 |
 | `step` | 数组 | 采集哪些 step,训推一致性通常 `[0]` |
 | `rank` | 数组 | 空=全部(单卡必须为 `[]`) |
@@ -62,7 +62,7 @@ debugger.step()   # 结束一个 step,落盘并推进步数(放在 stop 之后);
 | `statistics.scope` | `[start, stop]` | **长度须为 2**,锁定采集区间 |
 | `statistics.request_id` | 字符串 | 配合 `scheduled_tokens` 按请求切片 |
 
-`PrecisionDebugger` 构造参数(`config_path/task/dump_path/level/step`)与 config 等价,且**优先级高于 config**;但构造参数可配项少于 config.json(rank/async_dump/extra_info 只能在 config 配)。
+`PrecisionDebugger` 构造参数(`config_path/task/dump_path/level/step`)与 config 等价且**优先级高于 config**;但构造参数可配项少于 config.json(rank/async_dump/extra_info 只能在 config 配)。
 
 ## dump 结果目录
 
@@ -102,7 +102,7 @@ debugger.step()   # 结束一个 step,落盘并推进步数(放在 stop 之后);
 ```
 
 - L0 命名:`Module.{name}.{class}.forward.{n}` / `.backward.{n}` / `.parameters_grad.{n}`;L1 命名:`{Api}.{name}.{n}.forward/backward`。
-- 每个 tensor 含 `Max/Min/Mean/Norm(L2)/dtype/shape/data_name`;`summary_mode=md5/xor` 时该字段名为 `md5`。
+- 每个 tensor 含 `Max/Min/Mean/Norm(L2)/dtype/shape/data_name`;`summary_mode=md5/xor` 时字段名为 `md5`。
 - NZ 格式 tensor 的 Max/Min/Mean/Norm 为 `null`;非 float16/32/bf16 只算 Max/Min。
 - 比对时两侧取相同语义边界的条目(dump.json 内同名字段),shape/dtype 一致才可比。
 
@@ -113,6 +113,6 @@ debugger.step()   # 结束一个 step,落盘并推进步数(放在 stop 之后);
 ## 注意事项
 
 - 仅支持 PyTorch;PyTorch ≥2.7 的 dynamo 场景不支持。eager 模式才可钩住算子。
-- 接入 msprobe 采集可能改变 loss/gnorm(工具 item 操作引入同步 + hook 机制),比对前确认可接受。
+- 接入 msprobe 可能改变 loss/gnorm(工具 item 操作引入同步 + hook 机制),比对前确认可接受。
 - 可配置 `dump_enable` 动态启停 dump。
-- 不要采集不需要的 API/输出:可改 `support_wrap_ops.yaml`(完全不采)或 `builtin_ignore_ops.yaml`(采调用但屏蔽输入/输出,常用于通信算子收缓冲区)。
+- 不要采集不需要的 API/输出:改 `support_wrap_ops.yaml`(完全不采)或 `builtin_ignore_ops.yaml`(采调用但屏蔽输入/输出,常用于通信算子收缓冲区)。
