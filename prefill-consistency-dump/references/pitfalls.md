@@ -143,9 +143,23 @@
 - **修复**:缩短运行时临时路径——`VIME_TAG` 用短名,`RAY_TMPDIR`/`--temp-dir` 放短路径(`/tmp/ray_<短tag>`),必要时缩短 job 名。
 - **预防**:tag/路径长度是硬约束——计划 tag 先估 `len(temp_dir)+len(job) < 107`;每次加后缀(roundN 之类)复查总长。
 
-## 分析环节(consistency-dump-analysis,不在本 skill)
+### P25. mcore 默认 MLA rope_type=yarn 误套,训练侧需显式 rope_type="rope"(09-22,glm4.7 R1 隔离)
+- **症状**:训练侧 rope 段与推理侧不一致(YaRN 配置**逻辑级**差异);推理侧 HF `rope_scaling=None` 是标准 RoPE。
+- **根因**:mcore 默认 `args.rope_type = "yarn" if args.multi_latent_attention else "rope"`(vime `arguments.py`);GLM-4.7 MLA 被误套 yarn+40,污染 rope 段。
+- **修复**(隔离或修复都是这一行):bridge provider 显式 `provider.rope_type = "rope"`。
+- **预防**:MLA 模型先查 HF `rope_scaling`;为 None 时确认训练侧 `rope_type` 未被默认 yarn 污染;打桩隔离轮改配置时记录为"诊断残留"而非"功能修复"(见 P29)。
 
-本 skill 只负责采集;分析定位、ULP 量化、放大链、结论与报告由 **consistency-dump-analysis** 承担(相关分析坑已收敛到该 skill 的 references)。
+### P26. 恢复代码时甄别 [DUMP] 标记的功能修复 vs 诊断残留(09-22,恢复阶段)
+- **症状**:恢复时 bridge 里 `qk_layernorm=True`、MLA 权重映射(`q_a_layernorm`)与 `mtp_num_layers=0`、`rope_type="rope"` **都带 [DUMP] 注释**,无法一眼区分该保留还是回退。
+- **根因**:采集接入期加的功能修复(模型能跑的前提)与诊断隔离(验证差异点)都顺手标了 [DUMP];恢复阶段靠"有没有标记"分不清。
+- **修复**:用 **checkpoint 权重键名**做三方对照(git HEAD / `.bak_dump` 备份 / 磁盘 HF checkpoint 键名)验证——旧映射 `q_layernorm→q_norm`/`k_layernorm→k_norm` 在 HF checkpoint(实为 `q_a_layernorm`/`kv_a_layernorm`)下**必然加载失败** → 这些改动是功能修复(**保留**);`rope_type="rope"` 是隔离轮诊断残留(**回退**)。删除 `.bak_dump` 前先 `diff` 备份确认无其他未覆盖改动。
+- **预防**:接入期给"功能修复"与"诊断隔离"用**不同标记前缀**(如 `# FIX:` vs `# ISOLATE:`),恢复时有据可依;恢复不是无脑 checkout,功能修复回退会把训练打回跑不起来。
+
+### P27. vLLM 引擎权重传输挂起 → SKIP_WEIGHT_TRANSFER 直接磁盘加载(09-22,R0 反复启动 12 次)
+- **症状**:R0 job 反复启动失败,卡在 vLLM 引擎权重传输(HCCL 慢路径/挂起);加 `export SKIP_WEIGHT_TRANSFER=1` 后跳过即成功。
+- **根因**:vLLM 引擎经 HCCL 从训练侧收权重慢/挂起;而两侧本就从**同一磁盘 HF 权重**加载,该传输纯冗余。
+- **修复**:采集/打桩脚本加 `export SKIP_WEIGHT_TRANSFER=1`(vime 侧 env-gated:跳过 vLLM 权重传输,两侧各自从磁盘加载;训练 bridge 578/578 加载 + vLLM 6.23GB)。
+- **预防**:两侧同源磁盘权重时**默认跳过引擎权重传输**;R0 启动失败先分"引擎起不来" vs "权重传输挂"两类原因,别在后者上反复重试。
 
 ## 已单独记录的教训
 

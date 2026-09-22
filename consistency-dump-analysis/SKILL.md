@@ -189,6 +189,7 @@ python3 scripts/generate_alignment_report.py --input report_source.json --output
 | `references/analysis.md` | 逐边界精确门禁、首差异定位、ULP 量化、放大链、排除假设、分类结论的详细方法与判定指纹 | 阶段 3-4、6 |
 | `references/stubbing-loop.md` | **差异点隔离验证(打桩迭代)方法论 + 打桩指令 JSON schema**:独立差异 vs 放大差异判定、指令格式、迭代停止条件、实战沉淀的判定方法论 | 阶段 5 |
 | `references/prefill-logprob-diff.md` | prefill logprob diff(训练循环直接算的数值指标)的通用计算口径与解读陷阱 | 阶段 7 填数值指标时 |
+| `references/pitfalls.md` | 分析侧实战失败教训(A 系列):shift-by-one 位移陷阱、lm_head 按 shape 找权重、logits 定性三件套等 | 阶段 1-5 遇症状对照 |
 | `references/report-source.md` | `report_source.json` 字段说明与填法(结合模板) | 阶段 8 填报告源时 |
 | `references/task_card.json` | 目标/范围记录模板 | 阶段 0 |
 | `references/templates/stub_instruction.example.json` | 打桩指令 `stub_instruction.json` 示例模板(融合 vs 独立算子场景;算子名/路径/维度为占位符,以现场映射为准) | 阶段 5 输出打桩指令时 |
