@@ -15,7 +15,7 @@ slime 是"训练侧 Megatron + 推理侧 SGLang"的训推分离架构。训练�
 | 事项 | 位置(线索) | 现场验证 |
 |---|---|---|
 | PROMPTS_ONLY 裁剪 | 训练侧 `slime/backends/megatron_utils/actor.py` 的 `train_actor` 入口:构造 prompt-only 副本(deepcopy + 按 `prompt_length = total_length - response_length` 截 tokens,response_lengths 置 0,loss_masks 置空)后喂 `get_data_iterator` | `get_data_iterator` 签名随版本:msprobe 文档示例 3 参,slime v0.2.2 实测**单参**(data.py:256)。改前 grep |
-| 训练侧接入 | `MegatronTrainRayActor.init` 实例化 debugger(**必须在 monkey_patch_torch_dist 之前**,避免 bias_swiglu_fusion 冲突);`train_actor` 里 debugger 包住 `compute_log_prob`(只喂 prompt-only 副本),完成后 `save_debug_train_data` | 只采 `old_log_prob` 一个阶段;`step()` 在 `stop()` 后调用一次。官方做法是裁剪 + 改 loss/metrics 兜底、训练照常走完(见 SKILL 阶段 5、`pitfalls.md` P6b),不要 save 后 return 跳过训练 |
+| 训练侧接入 | `MegatronTrainRayActor.init` 实例化 debugger(**必须在 monkey_patch_torch_dist 之前**,避免 bias_swiglu_fusion 冲突);`train_actor` 里 debugger 包住 `compute_log_prob`(只喂 prompt-only 副本),完成后 `save_debug_train_data` | 只采 `old_log_prob` 一个阶段;`step()` 在 `stop()` 后调用一次。官方做法是裁剪 + 改 loss/metrics 兜底、训练照常走完(见 SKILL 阶段 6、`pitfalls.md` P6b),不要 save 后 return 跳过训练 |
 | 推理侧接入 | SGLang ≥0.5.11:传 `--sglang-msprobe-dump-config` 即可;原生 start/stop/step 包住每次 `forward()`,warmup 走 `self.model.forward()` 绕过 → **step0 就是首个真实 prefill**;原生自动 `disable_cuda_graph=True` + `skip_server_warmup=True`。<0.5.11:改 `ModelRunner.__init__` 实例化 + `forward()` 里仅对 `is_extend` 且 token 数 ≥ 阈值(默认 2)的采集,跳过启动约 1 token 的 dummy EXTEND | 须加 `--sglang-disable-cuda-graph` 否则 msprobe 钩不住 |
 | request_id 关联 | 通用方法:`new-framework.md` §2③;rank 对齐用 `rank_id=self.gpu_id`(SGLang DP 各 worker `get_rank()` 重复) | vllm ≥0.14 的 8 位 hex 后缀剥除 |
 

@@ -1,6 +1,6 @@
 # 打桩二次采集(数据覆盖加载,msprobe `load`)执行手册
 
-配合 SKILL 阶段 7。**打桩** = 用先前采集的模块级(L0/mix)输入 tensor,在目标模型模块前向时**覆盖其实际输入**(msprobe `load`),把训推差异边界"强行对齐",隔离前序累计误差,再继续 dump 下游,迭代找出所有独立差异点。官方功能名**数据覆盖加载**,官方文档 `docs/zh/user_guide/dump/pytorch_data_load_instruct.md`(上游 master 源码内有;容器 26.1 正式版无此功能,需源码安装)。
+配合 SKILL 阶段 8。**打桩** = 用先前采集的模块级(L0/mix)输入 tensor,在目标模型模块前向时**覆盖其实际输入**(msprobe `load`),把训推差异边界"强行对齐",隔离前序累计误差,再继续 dump 下游,迭代找出所有独立差异点。官方功能名**数据覆盖加载**,官方文档 `docs/zh/user_guide/dump/pytorch_data_load_instruct.md`(上游 master 源码内有;容器 26.1 正式版无此功能,需源码安装)。
 
 ## 1 前提
 
@@ -55,7 +55,7 @@
 3. 改造产物放**新目录**(别污染源 dump),`load.path` 指向它。**新目录必须保持与源相同的层级结构** `step{N}/rank{M}/dump_tensor_data/`——load 按 `{load.path}/step{N}/rank{M}/dump_tensor_data/{目标条目名}.input.{i}.pt` 精确找文件。变换规则来自 analysis 侧打桩指令的 `modules[].transform`。
 4. 检查目标模块 forward 的**参数顺序**:工具按位置 index 加载——A 模型 `forward(x, mask)` 与 B 模型 `forward(mask, x)` 会被按位置错配(shape 碰巧对上但语义错误),工具无法自动检测,须保证两侧 forward 签名一致。
 
-## 4 流程(与 SKILL 阶段 7 对应)
+## 4 流程(与 SKILL 阶段 8 对应)
 
 ```
 接 stub_instruction.json(analysis 侧)

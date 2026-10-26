@@ -1,6 +1,6 @@
 ---
 name: prefill-consistency-dump
-description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按分析侧打桩指令做 msprobe `load` 数据覆盖加载二次采集,隔离差异。完整流程:预检清卡 → 授权 → 识别现场 → 输入对齐(PROMPTS_ONLY)→ 接入采集 → 采集验证 → 打桩二次采集(与 consistency-dump-analysis 循环)→ 恢复代码。产出"两侧可比的 prefill dump"与"打桩隔离后的下游 dump";差异分析、首差异定位、打桩指令、整体结论由 **consistency-dump-analysis** 承担。触发词:训推一致、训推一致性、prefill 比对、msprobe dump/采集、精度比对数据采集、打桩二次采集、清卡验环境后采数据;已采 dump 的分析转 consistency-dump-analysis。
+description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按分析侧打桩指令做 msprobe `load` 数据覆盖加载二次采集,隔离差异。完整流程:预检清卡 → 授权 → 识别现场 → 输入对齐(PROMPTS_ONLY)→ 参数对齐校验(dump 前前置:校验两侧 config 超参/结构/权重,不一致输出参数不一致点并打桩对齐)→ 接入采集 → 采集验证 → 打桩二次采集(与 consistency-dump-analysis 循环)→ 恢复代码。产出"两侧可比的 prefill dump"与"打桩隔离后的下游 dump";差异分析、首差异定位、打桩指令、整体结论由 **consistency-dump-analysis** 承担。触发词:训推一致、训推一致性、prefill 比对、msprobe dump/采集、精度比对数据采集、打桩二次采集、参数对齐校验、参数不一致点、mHC 配置不一致、权重不同步、清卡验环境后采数据;已采 dump 的分析转 consistency-dump-analysis。
 ---
 
 # Prefill 训推一致性数据采集
@@ -17,13 +17,14 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 
 ```
 0 锁定目标 → 1 预检清卡 → 2 授权 → 3 识别现场
-  → 4 输入对齐 → 5 接入采集 → 6 采集验证
-  → 7 打桩二次采集(与分析侧循环:拿打桩指令 → load 覆盖边界 → 再产 dump)
-  → 8 恢复代码
+  → 4 输入对齐 → 5 参数对齐校验(dump 前前置)
+  → 6 接入采集 → 7 采集验证
+  → 8 打桩二次采集(与分析侧循环:拿打桩指令 → load 覆盖边界 → 再产 dump)
+  → 9 恢复代码
 → dump 交接给 consistency-dump-analysis(差异点/打桩指令/整体结论)
 ```
 
-阶段 6→7→6 是**与分析侧的循环**,直到 analysis 判定"所有独立差异点已找到";恢复代码只在全部轮次结束后执行一次。1 和 2 可合并(先看环境再一次性问清)。
+阶段 7→8→7 是**与分析侧的循环**,直到 analysis 判定"所有独立差异点已找到";恢复代码只在全部轮次结束后执行一次。1 和 2 可合并(先看环境再一次性问清);阶段 5 是 dump 前前置(参数层),与阶段 4 输入对齐(数据层)、阶段 8 tensor 打桩(输入覆盖)互补、各管一层。
 
 ## 0 锁定目标
 
@@ -94,9 +95,21 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 
 > **裁剪副作用**:裁剪副本**只喂 log_prob 前向**,别替换整个 rollout_data(整体替换会因 response_lengths=0 split 崩);`loss_masks` 裁 `m[:0]` 靠 pad 展开;adv/correction 让 `rollout_corr_helper` 在 PROMPTS_ONLY=1 时直接 `return batch, {}` 早退,并同步改 loss/metrics 兜底,**训练照常走完**(P1-P3、P6b)。
 
-## 5 接入采集
+## 5 参数对齐校验(dump 前前置)
 
-在训练/推理两侧包住目标前向,用 msprobe PrecisionDebugger 采集。**每一步改动都记录**(阶段 8 恢复依据)。接入会改目标代码,预期内。
+目的:接入采集、跑 dump 前,先校验训练侧与推理侧模型的**配置参数、参数结构、权重**是否对齐;不一致则作为**参数不一致点**输出、打桩对齐后重建模型,再进阶段 6 采 dump。动机案例:mHC 配置不一致——训练侧 Megatron-Bridge 转换字段名写错(`enable_hyper_connections` 应为 `enable_mhc_connections`),`config.json` 的 mHC 开关/超参训练侧全落空,训练跑无 mHC 的退化模型而推理恒启用,两侧模型结构都不同,dump 天然对不上。这类**模型层不一致必须 dump 前解决**,不能等 tensor 比对才发现。完整手册见 `references/param-alignment.md`。
+
+1. **静态 config 比对**(必做):读训练侧**实际生效** config(provider/bridge 转换结果,不能只读原始 config.json——mHC 案例原始 config 有 `hc_mult` 但 bridge 没接住)+ 推理侧 `hf_config`,逐项比对。训练侧实际生效 config 获取:**已落盘** bridge/provider config 优先;没有则用 `scripts/param_align_provider_dump.py` 从训练侧实际 bridge 实例化 provider dump(`python3 scripts/param_align_provider_dump.py <hf模型目录> <out.json> --bridge <训练侧bridge类名>`,默认 `DeepSeekV4FlashBridge`,内部含 nvrx 环境适配)。通用比对脚本 `scripts/param_align_check.py`(**不绑定任何模型**):`--train-cfg <训练侧实际生效config> --infer-cfg <推理侧config.json> [--mapping <字段映射json>]`——传映射按语义逐项比(两侧字段名可不同,支持嵌套点分路径与结构断言 `infer_expected`,示例 `scripts/param_alignment_mapping.example.json` 复制改写);不传映射自动同名键比对兜底。结构开关(如 `enable_mhc_connections`)是最高优先级——一侧有模块另一侧没有,比数值不一致更严重。
+2. **不一致 → 参数不一致点**:产出 `param_alignment_report.json`(逐项 `EXACT/DIFF/MISSING_SIDE` + `mismatch_points`),编号 P1/P2...
+3. **打桩对齐**:有 DIFF 时产出 `param_alignment_instruction.json`(模板 `references/templates/param_alignment_instruction.example.json`):`align_side`/`method`(`config/code`|`weight`)/`target`/`action`/`verify`。执行对齐(修 config/代码开关/统一权重)→ **重建模型** → 重跑校验,不一致点变 EXACT 才进采集。**msprobe `load` 只覆盖模块输入 tensor,不覆盖参数(`.parameters.weight.pt` 不参与),参数对齐不能靠 load**,走 config/code/weight。
+4. **动态结构/权重比对**(模型构建后、采集前):dump 两侧 `named_parameters()` 清单比结构(`train_only_keys`/`infer_only_keys`)+ 对应参数 `torch.equal` 比权重;不一致回第 3 步对齐。可复用 consistency-dump-analysis 的语义映射方法论(`references/semantic-mapping.md`),本阶段只做参数/结构/权重层。
+5. **登记**:对齐改动与阶段 6 接入改动同册登记,阶段 9 统一恢复;对齐结果(哪些参数不一致已对齐/未对齐)写进 task_card 交接分析侧。
+
+> 别把参数对齐当输入对齐:阶段 4 对齐输入数据(数据层),本阶段对齐模型本身(参数层);两层都 EXACT 才能采可比 dump。
+
+## 6 接入采集
+
+在训练/推理两侧包住目标前向,用 msprobe PrecisionDebugger 采集。**每一步改动都记录**(阶段 9 恢复依据)。接入会改目标代码,预期内。
 
 > 两个真实翻车点,先读再改:① 补丁脚本定界符避开目标代码里的引号(用 `'''`),应用前 `py_compile` 自检(P11);② 推理引擎返回字段别照抄文档——vLLM-ascend 的 `prompt_logprobs` 是 **top-k 嵌套 dict**,解析前先打 `[DUMP_DIAG]` 确认结构(P12)。
 
@@ -109,7 +122,7 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 7. **msprobe 配置**:两侧各一份 config(`msprobe-config.md` 模板),`task=statistics`(轻量)或 `tensor`,`level=L0/mix`,dump_path 分开。要算 prefill logprob_diff,采集级别须覆盖 final 输出边界(logits/output_layer/lm_head)。
 8. **记录改动清单**:`git diff` 快照或备份,登记每处改动(文件/位置/内容/恢复方式)。
 
-## 6 采集验证
+## 7 采集验证
 
 1. 基线命令追加采集开关(`DUMP_ON=1`、`PROMPTS_ONLY=1`,推理侧 `dump_config_path`;开关名按阶段 3 现场确认)跑一次。
 2. **验产物**:两侧 dump 路径出现 `step_N/rank_M/dump.json`(或等价),非空。
@@ -122,7 +135,7 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 > **采集踩坑**:训练侧有效 dump 在 **step0**(compute_log_prob 主前向),step1 未 flush 为空;只有 `can_reuse_log_probs_in_loss=False` 时主前向才执行,需 `--get-mismatch-metrics` 强制。docker exec 清理用 `[r]ay` 正则防自匹配、长任务用 `-d` 分离;每次采集前确认目标卡 HBM 回基线(残留 EngineCore 会让二次采集 OOM)。
 > **启动失败先对坑,别从头 debug**:① 基于基线重建的脚本逐段 diff 基线,漏 `--rm-type` 报 `Rule-based RM type is not specified`(P13);② 含空格 JSON 过 `ray job submit` 被重新 shell 解析截断,改无空格 compact 形式(P14);③ 容器内慢命令用长 timeout + `-d` + `tr -d '\n\r'`(P15)。详见 `references/pitfalls.md`。
 
-## 7 打桩二次采集(数据覆盖加载,与分析侧循环)
+## 8 打桩二次采集(数据覆盖加载,与分析侧循环)
 
 拿到 analysis 侧差异结论后,若下游还有待确认独立差异,按它的**打桩指令**做隔离再采,迭代找出**所有独立差异点**。原理:用先前采集的模块级输入 tensor 覆盖目标模型该模块实际输入(msprobe `load`,forward_pre_hook 注入),把差异边界强行对齐、隔离前序误差,再 dump 下游——覆盖后若仍有非舍入级差异,就是下一个独立差异点,继续打桩,直到下游全 EXACT/只剩余舍入级。完整执行手册见 `references/stubbing.md`。
 
@@ -147,13 +160,13 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
    }
    ```
    条目名=`Module.{dotted_path}.{ClassName}.forward.{N}`(取 `.input.{i}.pt` 之前的部分),以 `Module.` 开头、`.forward.{N}` 结尾,能被目标模型 `named_modules()` 命中。
-5. **重跑采集**:沿用阶段 5 接入不变,只改 config(覆盖哪侧改哪侧并重跑);验证可 `dump_after_load=false` 只覆盖不 dump,观察下游指标恢复。注意 load 覆盖后,被覆盖模块及**直接上游**的 backward 数据在 dump 中可能缺失——只影响 dump 采集,不影响实际反向结果。
+5. **重跑采集**:沿用阶段 6 接入不变,只改 config(覆盖哪侧改哪侧并重跑);验证可 `dump_after_load=false` 只覆盖不 dump,观察下游指标恢复。注意 load 覆盖后,被覆盖模块及**直接上游**的 backward 数据在 dump 中可能缺失——只影响 dump 采集,不影响实际反向结果。
 6. **验 load 生效**:覆盖边界两侧输入 cosine=1.0;`stop()` 无"未命中条目"warning;`load.path` 缺失/modules 空/条目格式非法启动报错;shape/dtype 不匹配只 warning 仍替换,forward 可能报错——改造源数据务必对齐。
 7. **交接下一轮**:新 dump 路径(dump_path)+ round 号 + 目标侧 + 被覆盖条目清单,交给 analysis 侧比对下游。
 
 > **打桩方向**:要隔离/验证训练侧前序差异 → 用推理侧 dump 覆盖训练侧模块输入;反之亦然。选改动成本低、语义映射最清晰的一侧。目的都是让两侧从覆盖边界起输入一致,判断下游是否还有独立差异。
 
-## 8 恢复代码
+## 9 恢复代码
 
 全部轮次结束(analysis 给出整体结论或用户叫停)后恢复,无论结果如何:
 
@@ -161,11 +174,11 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 2. 验证:`git diff` 干净或与备份完全一致。
 3. 确认无残留:`DUMP_ON`、`PROMPTS_ONLY`、`dump_config_path`、debugger 调用、`load` 配置段/改造后源 dump 目录。
 
-恢复是采集的组成部分,跳过等于没做完。**打桩轮次之间不要恢复**(6→7→6 循环共用同一套接入)。
+恢复是采集的组成部分,跳过等于没做完。**打桩轮次之间不要恢复**(7→8→7 循环共用同一套接入)。
 
 ## 职责边界
 
-本 skill 只负责采集与打桩:产"两侧可比的 prefill dump"、按 analysis 打桩指令 load 二次采集产"打桩后 dump";**差异分析、首差异定位、输出打桩指令、整体结论由 `consistency-dump-analysis` 承担**。每轮采集后把 dump 路径与 task_card 交接给它,等它的打桩指令;全部轮次结束后恢复代码。本 skill 不承担任何分析/报告职责。
+本 skill 只负责采集、参数对齐与打桩:产"两侧可比的 prefill dump"、dump 前参数对齐校验(阶段 5)、按 analysis 打桩指令 load 二次采集产"打桩后 dump";**差异分析、首差异定位、输出打桩指令、整体结论由 `consistency-dump-analysis` 承担**。每轮采集后把 dump 路径与 task_card(含参数对齐结果)交接给它,等它的打桩指令;全部轮次结束后恢复代码。本 skill 不承担任何分析/报告职责。
 
 ## 纪律
 
@@ -183,10 +196,11 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 | `references/slime.md` | slime v0.2.2(Megatron + SGLang)线索卡:训推分卡、padding 约束、SGLang 接入 | 识别到 slime |
 | `references/vime.md` | vime(Megatron-Bridge + vLLM-ascend)适配:设备分配(base_gpu_id=ray 物理卡号,勿二次映射)、引擎起不来排查、训练侧接入、指标碰头点 | 识别到 vime |
 | `references/msprobe-config.md` | PrecisionDebugger 接口 + config 模板 + dump.json 字段 | 配置/验证时 |
-| `references/stubbing.md` | 打桩二次采集(msprobe `load`)执行手册:官方要点、训推命名改造、config 写法、验证与坑 | 阶段 7 前必读 |
-| `references/templates/stub_instruction.example.json` | 打桩指令示例模板(算子名/路径/维度为占位符,以现场语义映射为准) | 阶段 7 接指令时对照 |
-| `references/prefill-logprob-diff.md` | prefill logprob_diff 通用步骤:训练循环内 `log_softmax` → 按 token 对齐(去 padding/末位)→ 逐 token 概率差 + mean/max/std → 打印训练日志 | 阶段 5 接入、阶段 6 验证 |
-| `references/probs-diff-monitoring.md` | response 段 E2E 指标(`rollout_probs_diff`/`train_rollout_logprob_abs_diff`):含义、verl 原生开关、通用落地;裁剪下 0 值=没算 | 阶段 5 接入、阶段 6 验证 E2E |
+| `references/param-alignment.md` | 参数对齐校验(dump 前前置):三层校验(config 超参/结构/权重)、字段映射表、报告与对齐指令、执行流程、与 tensor 打桩的区别 | 阶段 5 必读 |
+| `references/stubbing.md` | 打桩二次采集(msprobe `load`)执行手册:官方要点、训推命名改造、config 写法、验证与坑 | 阶段 8 前必读 |
+| `references/templates/stub_instruction.example.json` | 打桩指令示例模板(算子名/路径/维度为占位符,以现场语义映射为准) | 阶段 8 接指令时对照 |
+| `references/prefill-logprob-diff.md` | prefill logprob_diff 通用步骤:训练循环内 `log_softmax` → 按 token 对齐(去 padding/末位)→ 逐 token 概率差 + mean/max/std → 打印训练日志 | 阶段 6 接入、阶段 7 验证 |
+| `references/probs-diff-monitoring.md` | response 段 E2E 指标(`rollout_probs_diff`/`train_rollout_logprob_abs_diff`):含义、verl 原生开关、通用落地;裁剪下 0 值=没算 | 阶段 6 接入、阶段 7 验证 E2E |
 | `references/new-framework.md` | 新框架/未知框架通用方法论:现场识别清单、三件事找法、reference 自我纠错 | 各框架阶段 3(含新框架/文档过时) |
-| `references/pitfalls.md` | 实战失败教训(PROMPTS_ONLY 副作用、msprobe step 语义、docker/残留进程、补丁嵌套引号、prompt_logprobs 嵌套、漏 rm-type、ray job 拆 JSON、TE/F.silu 接入坑等) | 流程前通读一次;阶段 5/6/7 遇症状对照 |
+| `references/pitfalls.md` | 实战失败教训(PROMPTS_ONLY 副作用、msprobe step 语义、docker/残留进程、补丁嵌套引号、prompt_logprobs 嵌套、漏 rm-type、ray job 拆 JSON、TE/F.silu 接入坑等) | 流程前通读一次;阶段 6/7/8 遇症状对照 |
 | `references/task_card.json` | 目标/授权/环境记录模板 | 阶段 0 |

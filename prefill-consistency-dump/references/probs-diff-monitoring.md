@@ -67,7 +67,7 @@ training/rollout_actor_probs_pearson_corr 0.9987
 2. **算**:同一批 response token,`|exp(rollout_log_probs) − exp(actor_log_probs)|`(先还原概率再相减),按 response 段 mask 取有效位置;输出**逐 token 明细**(前 sample_max × token_max)+ **mean/max/std 聚合**。数据缺失或形状对不上时返回空、不编。
 3. **gate**:包在环境变量开关里(如 `*_PRINT_PROBS_DIFF=1`),默认关闭,生产零影响。
 4. **打出来**:写到训练日志或终端,带统一关键词(`training/rollout_probs_diff`),保证能被 grep 到;ray 系框架的 actor `print` 会进 job 终端日志。
-5. **验证 + 恢复**:阶段 6 确认日志出现输出且非空;采完随阶段 7 一起移除/还原。
+5. **验证 + 恢复**:阶段 7 确认日志出现输出且非空;采完随阶段 9 一起移除/还原。
 
 ## 关键坑
 

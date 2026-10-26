@@ -22,7 +22,7 @@
 3. **按 token 对齐**:两侧按真实 prompt token 数截齐(去 padding、训练侧去末位),覆盖同一组 (position, next_token) 对。
 4. **算 diff**:逐 token `|exp(lp_train) − exp(lp_infer)|`(先还原概率再相减,不是 `exp(|lp差|)`);输出逐 token 明细(前几个带索引)+ `_mean/_max/_std`(**只算有效 token 位,别把 padding 算进 mean**)。
 5. **打印到训练日志**:带统一关键词(如 `prefill_logprob_diff_mean`),保证 grep 到(ray 系 actor `print` 进 job 日志);数值非空、可解释即落地完成。
-6. **gate + 恢复**:包在环境变量开关里(如 `DUMP_ON=1` / `PRINT_PREFILL_LOGPROB_DIFF=1`),默认关,生产零影响;采完随阶段 7 一起恢复/删除。
+6. **gate + 恢复**:包在环境变量开关里(如 `DUMP_ON=1` / `PRINT_PREFILL_LOGPROB_DIFF=1`),默认关,生产零影响;采完随阶段 9 一起恢复/删除。
 7. **dump 兜底(仅当训练循环内算不出时)**:推理侧 rollout 不返回 prompt 段 logprob、碰头点凑不齐两侧数据时,退化为读两侧 dump final 输出边界 logits 离线算(见下节);但**首选训练循环内直接算并打印,这才是采集内产出**。
 
 ## 兜底(两侧 dump final 输出边界,仅当训练循环内算不出时用)
