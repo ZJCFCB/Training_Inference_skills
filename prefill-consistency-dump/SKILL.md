@@ -26,6 +26,8 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 
 阶段 7→8→7 是**与分析侧的循环**,直到 analysis 判定"所有独立差异点已找到";恢复代码只在全部轮次结束后执行一次。1 和 2 可合并(先看环境再一次性问清);阶段 5 是 dump 前前置(参数层),与阶段 4 输入对齐(数据层)、阶段 8 tensor 打桩(输入覆盖)互补、各管一层。
 
+**硬性执行顺序(必须遵守)**:严格按 0→9 逐阶段推进,不得跳步。每一阶段的产物未产出并验证通过前,不得开始下一阶段——**尤其阶段 5 参数对齐校验(`param_alignment_report.json` 全部 EXACT)必须先于阶段 6 接入采集/改代码**;若发现已越过前置阶段,必须先回退补做该阶段,再继续。
+
 ## 0 锁定目标
 
 把下列信息记入 `references/task_card.json`:模型 / 训练后端(Megatron|FSDP|其他)/ 推理引擎及版本(vLLM|SGLang|其他)/ 硬件 / 证据工具(msprobe PrecisionDebugger 或等价)/ 采集范围(确定性单样本 prefill)/ 停止条件(采到两侧可比 prefill dump)。
@@ -110,6 +112,8 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 ## 6 接入采集
 
 在训练/推理两侧包住目标前向,用 msprobe PrecisionDebugger 采集。**每一步改动都记录**(阶段 9 恢复依据)。接入会改目标代码,预期内。
+
+**改代码前先读 reference(硬性)**:先按 Reference 表"何时读"列,读完本阶段对应 reference(`verl.md`/`vime.md`/`msprobe-config.md`/`param-alignment.md`/`pitfalls.md` 等),再对照现场 grep 确认符号;未读对应 reference 不得开始接入/改代码。
 
 > 两个真实翻车点,先读再改:① 补丁脚本定界符避开目标代码里的引号(用 `'''`),应用前 `py_compile` 自检(P11);② 推理引擎返回字段别照抄文档——vLLM-ascend 的 `prompt_logprobs` 是 **top-k 嵌套 dict**,解析前先打 `[DUMP_DIAG]` 确认结构(P12)。
 
