@@ -97,7 +97,7 @@ description: 为训推一致性(prefill)采集两侧可比的 dump 数据,并按
 
 ## 5 参数对齐校验(dump 前前置)
 
-目的:接入采集、跑 dump 前,先校验训练侧与推理侧模型的**配置参数、参数结构、权重**是否对齐;不一致则作为**参数不一致点**输出、打桩对齐后重建模型,再进阶段 6 采 dump。动机案例:mHC 配置不一致——训练侧 Megatron-Bridge 转换字段名写错(`enable_hyper_connections` 应为 `enable_mhc_connections`),`config.json` 的 mHC 开关/超参训练侧全落空,训练跑无 mHC 的退化模型而推理恒启用,两侧模型结构都不同,dump 天然对不上。这类**模型层不一致必须 dump 前解决**,不能等 tensor 比对才发现。完整手册见 `references/param-alignment.md`。
+目的:接入采集、跑 dump 前,先校验训练侧与推理侧模型的**配置参数、参数结构、权重**是否对齐;不一致则作为**参数不一致点**输出、打桩对齐后重建模型,再进阶段 6 采 dump。动机案例:mHC 配置不一致——训练侧 Megatron-Bridge 转换字段名写错(`enable_hyper_connections` 应为 `enable_mhc_connections`),`config.json` 的 mHC 开关/超参训练侧全落空,训练跑无 mHC 的退化模型而推理恒启用,两侧模型结构都不同,dump 天然对不上。这类**模型层不一致必须 dump 前解决**,不能等 tensor 比对才发现。**开关对齐 ≠ 参数对齐**:结构开关对齐后还要核该模块的 ② 配置参数(须是模块实际消费的字段,不是 bridge 写了就算)与 ③ 派生形状 vs checkpoint 权重(实例化模块核对);三要素清单见 `references/param-alignment.md` §1.5。完整手册见 `references/param-alignment.md`。
 
 1. **静态 config 比对**(必做):读训练侧**实际生效** config(provider/bridge 转换结果,不能只读原始 config.json——mHC 案例原始 config 有 `hc_mult` 但 bridge 没接住)+ 推理侧 `hf_config`,逐项比对。训练侧实际生效 config 获取:**已落盘** bridge/provider config 优先;没有则用 `scripts/param_align_provider_dump.py` 从训练侧实际 bridge 实例化 provider dump(`python3 scripts/param_align_provider_dump.py <hf模型目录> <out.json> --bridge <训练侧bridge类名>`,默认 `DeepSeekV4FlashBridge`,内部含 nvrx 环境适配)。通用比对脚本 `scripts/param_align_check.py`(**不绑定任何模型**):`--train-cfg <训练侧实际生效config> --infer-cfg <推理侧config.json> [--mapping <字段映射json>]`——传映射按语义逐项比(两侧字段名可不同,支持嵌套点分路径与结构断言 `infer_expected`,示例 `scripts/param_alignment_mapping.example.json` 复制改写);不传映射自动同名键比对兜底。结构开关(如 `enable_mhc_connections`)是最高优先级——一侧有模块另一侧没有,比数值不一致更严重。
 2. **不一致 → 参数不一致点**:产出 `param_alignment_report.json`(逐项 `EXACT/DIFF/MISSING_SIDE` + `mismatch_points`),编号 P1/P2...
